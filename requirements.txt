@@ -1,6 +1,6 @@
 streamlit
 pymupdf
 pandas
-numpy
 matplotlib
-wordcloud
+numpy
+reportlab
