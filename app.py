@@ -1,166 +1,135 @@
-# app.py - SmartCV Analyzer Pro
-
 import streamlit as st
-import fitz
+import fitz  # PyMuPDF
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import re
-import os
-import tempfile
-from wordcloud import WordCloud
 from io import BytesIO
-import base64
 
-# ===============================
-# 📌 Helper Functions
-# ===============================
+# ----------- Skill Keywords (Edit as Needed) -----------
+TECHNICAL_SKILLS = ["python", "r", "sql", "pyspark", "spark", "hadoop", "nlp", "tensorflow", "deep learning"]
+TOOLS = ["pandas", "numpy", "matplotlib", "seaborn", "scikit-learn", "power bi", "tableau"]
+SOFT_SKILLS = ["communication", "leadership", "teamwork", "problem solving", "critical thinking"]
 
+# ----------- PDF Text Extractor -----------
 def extract_text_from_pdf(file):
     text = ""
-    pdf_doc = fitz.open(stream=file.read(), filetype="pdf")
-    for page in pdf_doc:
-        text += page.get_text()
-    return text
+    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text.lower()
 
-def analyze_resume(text):
-    text_lower = text.lower()
+# ----------- Experience Extractor -----------
+def extract_experience(text):
+    match = re.search(r'(\d+)\+?\s+years?', text)
+    return int(match.group(1)) if match else 0
 
-    # Education
-    education_keywords = ["bachelor", "master", "ms", "phd", "bs", "mba"]
-    education = [word for word in education_keywords if word in text_lower]
+# ----------- Skill Counter -----------
+def count_skills(text, skill_list):
+    return [skill for skill in skill_list if skill in text]
 
-    # Experience Years
-    exp_pattern = re.findall(r'(\d+)\s+year', text_lower)
-    exp_years = int(exp_pattern[0]) if exp_pattern else 0
+# ----------- ATS Score Calculator -----------
+def calculate_ats_score(text):
+    all_keywords = TECHNICAL_SKILLS + TOOLS + SOFT_SKILLS
+    found = sum(1 for skill in all_keywords if skill in text)
+    return round((found / len(all_keywords)) * 100, 2)
 
-    # Skills
-    technical_skills = ["python", "r", "sql", "pyspark", "spark", "hadoop", "nlp", "tensorflow", "java", "c++"]
-    tools = ["pandas", "numpy", "matplotlib", "seaborn", "scikit-learn", "power bi", "tableau", "excel"]
-    soft_skills = ["communication", "teamwork", "leadership", "problem-solving", "critical thinking"]
+# ----------- CV Analyzer -----------
+def analyze_resume(file):
+    text = extract_text_from_pdf(file)
 
-    found_tech = [skill for skill in technical_skills if skill in text_lower]
-    found_tools = [tool for tool in tools if tool in text_lower]
-    found_soft = [skill for skill in soft_skills if skill in text_lower]
+    tech_found = count_skills(text, TECHNICAL_SKILLS)
+    tools_found = count_skills(text, TOOLS)
+    soft_found = count_skills(text, SOFT_SKILLS)
+    experience_years = extract_experience(text)
+    ats_score = calculate_ats_score(text)
 
-    # ATS Score (weighted)
-    ats_keywords = technical_skills + tools + soft_skills
-    ats_score = int((sum(1 for word in ats_keywords if word in text_lower) / len(ats_keywords)) * 100)
-
-    # Word count
-    word_count = len(text.split())
-
-    # Final Score for Ranking
-    final_score = ats_score + (len(found_tech) * 2) + (exp_years * 3)
+    suggestions = []
+    if experience_years == 0:
+        suggestions.append("Add work experience details with years.")
+    if ats_score < 80:
+        suggestions.append("Add more job-relevant keywords.")
+    if len(text.split()) < 300:
+        suggestions.append("Add more details to make resume more comprehensive.")
 
     return {
-        "education": education,
-        "experience_years_est": exp_years,
-        "skills_count": len(found_tech + found_tools + found_soft),
-        "technical_skills": found_tech,
-        "tools": found_tools,
-        "soft_skills": found_soft,
+        "filename": file.name,
+        "skills_count": len(tech_found) + len(tools_found) + len(soft_found),
+        "experience_years_est": experience_years,
         "ats_score": ats_score,
-        "word_count": word_count,
-        "final_score": final_score
+        "technical_skills": tech_found,
+        "tools": tools_found,
+        "soft_skills": soft_found,
+        "suggestions": suggestions
     }
 
-def analyze_multiple_resumes(files):
-    all_data = []
-    for file in files:
-        text = extract_text_from_pdf(file)
-        analysis = analyze_resume(text)
-        analysis["filename"] = file.name
-        all_data.append(analysis)
-    return pd.DataFrame(all_data)
-
+# ----------- Graphs -----------
 def plot_graphs(df):
     df['experience_years_est'] = pd.to_numeric(df['experience_years_est'], errors='coerce').fillna(0)
 
-    # Bar Chart: Skills vs Experience
-    fig, ax = plt.subplots(figsize=(10, 5))
+    # Skills (Bar) + Experience (Line)
+    fig, ax1 = plt.subplots(figsize=(10, 5))
     x = np.arange(len(df))
-    ax.bar(x - 0.2, df['skills_count'], width=0.4, label='Skills Count', color='blue')
-    ax.bar(x + 0.2, df['experience_years_est'], width=0.4, label='Experience (yrs)', color='orange')
-    ax.set_xticks(x)
-    ax.set_xticklabels(df['filename'], rotation=45)
-    ax.set_ylabel("Count / Years")
-    ax.set_title("Skills vs Experience Comparison")
-    ax.legend()
+
+    ax1.bar(x, df['skills_count'], width=0.4, color='blue', label='Skills Count')
+    ax1.set_ylabel("Skills Count", color='blue')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(df['filename'], rotation=45, ha="right")
+    ax1.tick_params(axis='y', labelcolor='blue')
+
+    ax2 = ax1.twinx()
+    ax2.plot(x, df['experience_years_est'], color='orange', marker='o', linewidth=2, label='Experience (yrs)')
+    ax2.set_ylabel("Experience (Years)", color='orange')
+    ax2.tick_params(axis='y', labelcolor='orange')
+
+    fig.suptitle("Skills vs Experience Comparison", fontsize=14)
+    fig.legend(loc="upper right", bbox_to_anchor=(1,1))
     st.pyplot(fig)
 
     # ATS Score Comparison
-    fig2, ax2 = plt.subplots(figsize=(10, 5))
-    ax2.bar(df['filename'], df['ats_score'], color='green')
-    ax2.set_ylabel("ATS Score (%)")
-    ax2.set_title("ATS Score Comparison")
+    fig2, ax3 = plt.subplots(figsize=(10, 5))
+    ax3.bar(df['filename'], df['ats_score'], color='green')
+    ax3.set_ylabel("ATS Score (%)")
+    ax3.set_title("ATS Score Comparison")
     st.pyplot(fig2)
 
-def generate_wordcloud(skills_list):
-    text = ' '.join(skills_list)
-    wordcloud = WordCloud(width=800, height=400, background_color='white').generate(text)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wordcloud, interpolation='bilinear')
-    ax.axis('off')
-    st.pyplot(fig)
+    # Pie chart for skills distribution (sum of all skills)
+    total_skills = df['skills_count'].sum()
+    if total_skills > 0:
+        labels = df['filename']
+        sizes = df['skills_count']
+        fig3, ax4 = plt.subplots()
+        ax4.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+        ax4.set_title("Skills Distribution Across Resumes")
+        st.pyplot(fig3)
 
-# ===============================
-# 📌 Streamlit UI
-# ===============================
+# ----------- Streamlit App -----------
+st.set_page_config(page_title="SmartCV Analyzer Pro", layout="wide")
 
-st.set_page_config(page_title="SmartCV Analyzer Pro", page_icon="📄", layout="wide")
 st.title("📄 SmartCV Analyzer Pro")
-st.write("Upload one or more resumes in PDF format to get detailed analysis, ATS score, ranking, graphs, and improvement suggestions.")
+st.write("Upload one or multiple resumes in PDF format to analyze skills, ATS score, experience, and improvement suggestions.")
 
-uploaded_files = st.file_uploader("Upload Resume(s)", type=["pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Resume(s)", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
-    df = analyze_multiple_resumes(uploaded_files)
+    results = []
+    for file in uploaded_files:
+        results.append(analyze_resume(file))
 
-    st.subheader("📊 Resume Analysis Table")
+    df = pd.DataFrame(results)
+
+    # Best CV
+    best_cv = df.loc[df['ats_score'].idxmax()]
+
+    st.subheader("📊 Resume Analysis Results")
     st.dataframe(df)
 
-    df_sorted = df.sort_values(by="final_score", ascending=False).reset_index(drop=True)
-    best_resume = df_sorted.iloc[0]
-
-    st.subheader("🏆 Best Resume")
-    st.write(f"**File:** {best_resume['filename']}")
-    st.write(f"**Final Score:** {best_resume['final_score']}")
-    st.write(f"**ATS Score:** {best_resume['ats_score']}%")
-    st.write(f"**Experience:** {best_resume['experience_years_est']} years")
-    st.write(f"**Skills:** {best_resume['technical_skills'] + best_resume['tools'] + best_resume['soft_skills']}")
-
-    st.subheader("❌ Weak Resumes & Reasons")
-    for idx, row in df_sorted.iloc[1:].iterrows():
-        reasons = []
-        if row['ats_score'] < 80:
-            reasons.append("Low ATS Score")
-        if row['experience_years_est'] < best_resume['experience_years_est']:
-            reasons.append("Less Experience")
-        if row['skills_count'] < best_resume['skills_count']:
-            reasons.append("Fewer Skills")
-        st.write(f"- **{row['filename']}**: {', '.join(reasons) if reasons else 'Other issues'}")
-
-    st.subheader("💡 Suggestions for Improvement")
-    for idx, row in df.iterrows():
-        st.markdown(f"**📄 {row['filename']}**")
-        st.write(f"🎓 Education: {', '.join(row['education']) if row['education'] else 'Not mentioned'}")
-        st.write(f"💼 Estimated Experience: {row['experience_years_est']} years")
-        st.write(f"🛠 Skills Found: {row['technical_skills'] + row['tools'] + row['soft_skills']}")
-        st.write(f"📈 ATS Score: {row['ats_score']}%")
-        st.write(f"📑 Word Count: {row['word_count']}")
-        suggestions = []
-        if row['experience_years_est'] == 0:
-            suggestions.append("Add clear years of experience.")
-        if row['ats_score'] < 80:
-            suggestions.append("Include more job-relevant keywords.")
-        if row['word_count'] < 300:
-            suggestions.append("Add more detailed project/work descriptions.")
-        st.write("💡 " + " ".join(suggestions) if suggestions else "Looks good!")
-
-    st.subheader("📈 Graphs")
     plot_graphs(df)
 
-    st.subheader("☁ Word Cloud of Best Resume Skills")
-    generate_wordcloud(best_resume['technical_skills'] + best_resume['tools'] + best_resume['soft_skills'])
+    st.subheader("🏆 Best Resume")
+    st.write(f"**{best_cv['filename']}** with ATS Score: **{best_cv['ats_score']}%**")
+    st.write("Suggestions:", ", ".join(best_cv['suggestions']) if best_cv['suggestions'] else "Looks perfect!")
 
+    st.subheader("💡 Suggestions for All Resumes")
+    for i, row in df.iterrows():
+        st.markdown(f"**{row['filename']}**: " + (", ".join(row['suggestions']) if row['suggestions'] else "No major improvements needed."))
